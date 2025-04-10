@@ -36,7 +36,7 @@ function EffectsConsole({ selectedChannelIndex, onClose, onStartInferencing }) {
         {/* --- Middle: Effects Area --- */}
         {/* Use flex-grow to take up remaining space */}
         <div className="flex-grow h-full min-w-0"> {/* min-w-0 helps prevent squeezing */}
-            <EffectsArea isMaster={isMasterSelected} />
+            <EffectsArea isMaster={isMasterSelected} channelIndex={selectedChannelIndex} />
         </div>
 
         {/* --- Right: Master Channel Strip --- */}

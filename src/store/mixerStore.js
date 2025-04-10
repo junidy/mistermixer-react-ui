@@ -17,15 +17,53 @@ const createDefaultChannel = (index) => {
     let defaultAnalogGain = 0.0;
     if (1 <= index <= 4) { defaultAnalogGain = -3.0; }
     else if (5 <= index <= 8) { defaultAnalogGain = -9.0; }
-    return {
-        muted: false, soloed: false, panning: 0.5, digital_gain: 0.0,
-        analog_gain: defaultAnalogGain, stereo: isMainBus,
-        equalizer: { enabled: false, lowShelf: { gain_db: 0.0, cutoff_freq: 80, q_factor: 0.707 }, highShelf: { gain_db: 0.0, cutoff_freq: 12000, q_factor: 0.707 }, band0: { gain_db: 0.0, cutoff_freq: 250, q_factor: 1.0 }, band1: { gain_db: 0.0, cutoff_freq: 1000, q_factor: 1.0 }, band2: { gain_db: 0.0, cutoff_freq: 4000, q_factor: 1.0 }, band3: { gain_db: 0.0, cutoff_freq: 10000, q_factor: 1.0 }, },
-        compressor: { enabled: false, threshold_db: -20.0, ratio: 2.0, attack_ms: 10.0, release_ms: 50.0, knee_db: 0.0, makeup_gain_db: 0.0, },
-        distortion: { enabled: false, drive: 0.0, output_gain_db: 0.0 },
-        phaser: { enabled: false, rate: 1.0, depth: 50.0 },
-        reverb: { enabled: isMainBus, decay_time: 1.5, wet_level: 25.0 },
-    };
+// --- ENSURE ALL EFFECT OBJECTS ARE INITIALIZED ---
+return {
+  // Direct Params
+  muted: false,
+  soloed: false,
+  panning: 0.5,
+  digital_gain: 0.0,
+  analog_gain: defaultAnalogGain,
+  stereo: isMainBus,
+
+  // Nested Effect Params (Initialize the objects!)
+  equalizer: {
+      enabled: false,
+      lowShelf: { gain_db: 0.0, cutoff_freq: 80, q_factor: 0.707 },
+      highShelf: { gain_db: 0.0, cutoff_freq: 12000, q_factor: 0.707 },
+      band0: { gain_db: 0.0, cutoff_freq: 250, q_factor: 1.0 },
+      band1: { gain_db: 0.0, cutoff_freq: 1000, q_factor: 1.0 },
+      band2: { gain_db: 0.0, cutoff_freq: 4000, q_factor: 1.0 },
+      band3: { gain_db: 0.0, cutoff_freq: 10000, q_factor: 1.0 },
+  },
+  compressor: {
+      enabled: false,
+      threshold_db: -20.0,
+      ratio: 2.0,
+      attack_ms: 10.0,
+      release_ms: 50.0,
+      knee_db: 0.0,
+      makeup_gain_db: 0.0,
+  },
+  distortion: {
+      enabled: false,
+      drive: 0.0,
+      output_gain_db: 0.0,
+  },
+  phaser: {
+      enabled: false,
+      rate: 1.0,
+      depth: 50.0,
+  },
+  reverb: {
+      // Only relevant for Master, but initialize anyway for consistency
+      enabled: isMainBus, // Default enable only for master
+      decay_time: 1.5,
+      wet_level: 25.0,
+  },
+  // --- END EFFECT INITIALIZATION ---
+};
 };
 const initialState = {
     channels: Array.from({ length: 9 }, (_, index) => createDefaultChannel(index)),
@@ -134,121 +172,189 @@ export const useMixerStore = create((set, get) => ({
 
     // --- UI Triggered Actions ---
 
-    // ** Channel Parameters **
-    setMuted: (channelIndex, isMuted) => {
-        const path = `/channels/${channelIndex}/muted`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].muted = isMuted; return newState; });
-        get()._sendPatchInternal(path, isMuted);
-    },
-    setSoloed: (channelIndex, isSoloed) => {
-        const path = `/channels/${channelIndex}/soloed`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].soloed = isSoloed; return newState; });
-        get()._sendPatchInternal(path, isSoloed);
-    },
-    setPanning: (channelIndex, panValue) => {
-        const path = `/channels/${channelIndex}/panning`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].panning = panValue; return newState; });
-        get()._throttleSendPatch(path, panValue);
-    },
-    setDigitalGain: (channelIndex, gainDb) => {
-        const path = `/channels/${channelIndex}/digital_gain`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].digital_gain = gainDb; return newState; });
-        get()._throttleSendPatch(path, gainDb);
-    },
-    setAnalogGain: (channelIndex, gainDb) => {
-        const path = `/channels/${channelIndex}/analog_gain`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].analog_gain = gainDb; return newState; });
-        get()._throttleSendPatch(path, gainDb);
-    },
-     setStereo: (channelIndex, isStereo) => { // Only relevant for channel 0 usually
-        const path = `/channels/${channelIndex}/stereo`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].stereo = isStereo; return newState; });
-        get()._sendPatchInternal(path, isStereo); // Toggle, send immediately
-    },
+// Helper for safe optimistic update of nested properties
+    // NOTE: This deep copies on every update, consider Immer middleware for complex states if performance becomes an issue.
+    _optimisticUpdate(updater) {
+      set((state) => {
+          try {
+              // Create deep copy FIRST
+              const newState = JSON.parse(JSON.stringify(state));
+              // Apply the update logic to the copied state
+              updater(newState);
+              // Return the modified copy
+              return newState;
+          } catch (e) {
+              console.error("Error during optimistic state update:", e);
+              return state; // Return original state on error
+          }
+      });
+  },
 
-    // ** Equalizer Parameters **
-    setEqEnabled: (channelIndex, enabled) => {
-        const path = `/channels/${channelIndex}/equalizer/enabled`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].equalizer.enabled = enabled; return newState; });
-        get()._sendPatchInternal(path, enabled);
-    },
-    setEqBandParam: (channelIndex, bandName, paramName, value) => {
-        const path = `/channels/${channelIndex}/equalizer/${bandName}/${paramName}`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].equalizer[bandName][paramName] = value; return newState; });
-        get()._throttleSendPatch(path, value);
-    },
+  // ** Channel Parameters **
+  setMuted: (channelIndex, isMuted) => {
+      const path = `/channels/${channelIndex}/muted`;
+      get()._optimisticUpdate(newState => {
+          if (newState.channels?.[channelIndex]) { // Check existence
+              newState.channels[channelIndex].muted = isMuted;
+          }
+      });
+      get()._sendPatchInternal(path, isMuted);
+  },
+  setSoloed: (channelIndex, isSoloed) => {
+      const path = `/channels/${channelIndex}/soloed`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]) {
+              newState.channels[channelIndex].soloed = isSoloed;
+           }
+      });
+      get()._sendPatchInternal(path, isSoloed);
+  },
+  setPanning: (channelIndex, panValue) => {
+      const path = `/channels/${channelIndex}/panning`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]) {
+               newState.channels[channelIndex].panning = panValue;
+           }
+      });
+      get()._throttleSendPatch(path, panValue);
+  },
+  setDigitalGain: (channelIndex, gainDb) => {
+      const path = `/channels/${channelIndex}/digital_gain`;
+       get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]) {
+               newState.channels[channelIndex].digital_gain = gainDb;
+           }
+       });
+      get()._throttleSendPatch(path, gainDb);
+  },
+  setAnalogGain: (channelIndex, gainDb) => {
+      const path = `/channels/${channelIndex}/analog_gain`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]) {
+               newState.channels[channelIndex].analog_gain = gainDb;
+           }
+      });
+      get()._throttleSendPatch(path, gainDb);
+  },
+   setStereo: (channelIndex, isStereo) => {
+      const path = `/channels/${channelIndex}/stereo`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]) {
+               newState.channels[channelIndex].stereo = isStereo;
+           }
+      });
+      get()._sendPatchInternal(path, isStereo);
+  },
 
-    // === START: Filling in remaining actions ===
+  // ** Equalizer Parameters **
+  setEqEnabled: (channelIndex, enabled) => {
+      const path = `/channels/${channelIndex}/equalizer/enabled`;
+      get()._optimisticUpdate(newState => {
+          // Check path segments existence before assigning
+          if (newState.channels?.[channelIndex]?.equalizer) {
+              newState.channels[channelIndex].equalizer.enabled = enabled;
+          }
+      });
+      get()._sendPatchInternal(path, enabled);
+  },
+  setEqBandParam: (channelIndex, bandName, paramName, value) => {
+      const path = `/channels/${channelIndex}/equalizer/${bandName}/${paramName}`;
+      get()._optimisticUpdate(newState => {
+           // Check deeper path existence
+           if (newState.channels?.[channelIndex]?.equalizer?.[bandName]) {
+              newState.channels[channelIndex].equalizer[bandName][paramName] = value;
+           }
+      });
+      get()._throttleSendPatch(path, value);
+  },
 
-    // ** Compressor Parameters **
-    setCompressorEnabled: (channelIndex, enabled) => {
-        const path = `/channels/${channelIndex}/compressor/enabled`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].compressor.enabled = enabled; return newState; });
-        get()._sendPatchInternal(path, enabled);
-    },
-    setCompressorParam: (channelIndex, paramName, value) => {
-        // paramName: threshold_db, ratio, attack_ms, release_ms, knee_db, makeup_gain_db
-        const path = `/channels/${channelIndex}/compressor/${paramName}`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].compressor[paramName] = value; return newState; });
-        get()._throttleSendPatch(path, value); // All compressor params are continuous
-    },
+  // ** Compressor Parameters **
+  setCompressorEnabled: (channelIndex, enabled) => {
+      const path = `/channels/${channelIndex}/compressor/enabled`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.compressor) {
+              newState.channels[channelIndex].compressor.enabled = enabled;
+           }
+      });
+      get()._sendPatchInternal(path, enabled);
+  },
+  setCompressorParam: (channelIndex, paramName, value) => {
+      const path = `/channels/${channelIndex}/compressor/${paramName}`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.compressor) {
+               newState.channels[channelIndex].compressor[paramName] = value;
+           }
+      });
+      get()._throttleSendPatch(path, value);
+  },
 
-    // ** Distortion Parameters **
-    setDistortionEnabled: (channelIndex, enabled) => {
-        const path = `/channels/${channelIndex}/distortion/enabled`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].distortion.enabled = enabled; return newState; });
-        get()._sendPatchInternal(path, enabled);
-    },
-    setDistortionParam: (channelIndex, paramName, value) => {
-        // paramName: drive, output_gain_db
-        const path = `/channels/${channelIndex}/distortion/${paramName}`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].distortion[paramName] = value; return newState; });
-        get()._throttleSendPatch(path, value); // Both drive and output gain are continuous
-    },
+  // ** Distortion Parameters **
+  setDistortionEnabled: (channelIndex, enabled) => {
+      const path = `/channels/${channelIndex}/distortion/enabled`;
+       get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.distortion) {
+               newState.channels[channelIndex].distortion.enabled = enabled;
+           }
+       });
+      get()._sendPatchInternal(path, enabled);
+  },
+  setDistortionParam: (channelIndex, paramName, value) => {
+      const path = `/channels/${channelIndex}/distortion/${paramName}`;
+       get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.distortion) {
+               newState.channels[channelIndex].distortion[paramName] = value;
+           }
+       });
+      get()._throttleSendPatch(path, value);
+  },
 
-    // ** Phaser Parameters **
-    setPhaserEnabled: (channelIndex, enabled) => {
-        const path = `/channels/${channelIndex}/phaser/enabled`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].phaser.enabled = enabled; return newState; });
-        get()._sendPatchInternal(path, enabled);
-    },
-    setPhaserParam: (channelIndex, paramName, value) => {
-        // paramName: rate, depth
-        const path = `/channels/${channelIndex}/phaser/${paramName}`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].phaser[paramName] = value; return newState; });
-        get()._throttleSendPatch(path, value); // Both rate and depth are continuous
-    },
+  // ** Phaser Parameters **
+  setPhaserEnabled: (channelIndex, enabled) => {
+      const path = `/channels/${channelIndex}/phaser/enabled`;
+       get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.phaser) {
+               newState.channels[channelIndex].phaser.enabled = enabled;
+           }
+       });
+      get()._sendPatchInternal(path, enabled);
+  },
+  setPhaserParam: (channelIndex, paramName, value) => {
+      const path = `/channels/${channelIndex}/phaser/${paramName}`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.phaser) {
+               newState.channels[channelIndex].phaser[paramName] = value;
+           }
+      });
+      get()._throttleSendPatch(path, value);
+  },
 
-    // ** Reverb Parameters **
-    setReverbEnabled: (channelIndex, enabled) => {
-        const path = `/channels/${channelIndex}/reverb/enabled`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].reverb.enabled = enabled; return newState; });
-        get()._sendPatchInternal(path, enabled);
-    },
-    setReverbParam: (channelIndex, paramName, value) => {
-        // paramName: decay_time, wet_level
-        const path = `/channels/${channelIndex}/reverb/${paramName}`;
-        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].reverb[paramName] = value; return newState; });
-        get()._throttleSendPatch(path, value); // Both decay and wet level are continuous
-    },
+  // ** Reverb Parameters **
+  setReverbEnabled: (channelIndex, enabled) => {
+      const path = `/channels/${channelIndex}/reverb/enabled`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.reverb) {
+               newState.channels[channelIndex].reverb.enabled = enabled;
+           }
+      });
+      get()._sendPatchInternal(path, enabled);
+  },
+  setReverbParam: (channelIndex, paramName, value) => {
+      const path = `/channels/${channelIndex}/reverb/${paramName}`;
+      get()._optimisticUpdate(newState => {
+           if (newState.channels?.[channelIndex]?.reverb) {
+               newState.channels[channelIndex].reverb[paramName] = value;
+           }
+      });
+      get()._throttleSendPatch(path, value);
+  },
 
-    // ** Top-Level Flags **
-    setInferencingActive: (isActive) => {
-        const path = `/inferencing_active`;
-        // Optimistic update for inferencing flag
-        set((state) => ({ ...state, inferencing_active: isActive }));
-        get()._sendPatchInternal(path, isActive); // Send toggle immediately
-    },
-    // Note: soloing_active and hw_init_ready are typically read-only from the
-    // perspective of the UI client, managed by the backend state_manager.py.
-    // If you needed the UI to *set* hw_init_ready (unlikely), you'd add an action:
-    // setHwInitReady: (isReady) => {
-    //    const path = `/hw_init_ready`;
-    //    set((state) => ({ ...state, hw_init_ready: isReady }));
-    //    get()._sendPatchInternal(path, isReady);
-    // },
-
-    // === END: Filling in remaining actions ===
+  // ** Top-Level Flags **
+  setInferencingActive: (isActive) => {
+      const path = `/inferencing_active`;
+      // No need for deep copy/check for top-level primitive
+      set({ inferencing_active: isActive });
+      get()._sendPatchInternal(path, isActive);
+  },
 
 })); // --- End of create ---
 
