@@ -1,37 +1,65 @@
-import React, { useState } from 'react';
-import MixerConsole from './views/MixerConsole'; // Assuming views are in src/views
-import EffectsConsole from './views/EffectsConsole';
-import { MantineProvider } from '@mantine/core';
+// src/App.jsx
+import { useState, useCallback } from "react"; // Added useCallback
+import MixerConsole from "./views/MixerConsole";
+import EffectsConsole from "./views/EffectsConsole";
+import InferenceModal from "./components/InferenceModal"; // <-- Import the new modal
+import { MantineProvider } from "@mantine/core";
 
 function App() {
-  const [currentView, setCurrentView] = useState('mixer'); // 'mixer' or 'effects'
-  const [selectedChannelIndex, setSelectedChannelIndex] = useState(null); // 0-8
+  const [currentView, setCurrentView] = useState("mixer");
+  const [selectedChannelIndex, setSelectedChannelIndex] = useState(null);
+  const [isInferencingModalOpen, setIsInferencingModalOpen] = useState(false); // <-- State for modal
 
-  // Function passed down to trigger showing effects view
-  const showEffects = (channelIndex) => {
+  const showEffects = useCallback((channelIndex) => {
     console.log(`App: Showing effects for channel ${channelIndex}`);
     setSelectedChannelIndex(channelIndex);
-    setCurrentView('effects');
-  };
+    setCurrentView("effects");
+  }, []); // Using useCallback for stable prop reference
 
-  // Function passed down to trigger going back to mixer view
-  const showMixer = () => {
-    console.log('App: Showing mixer view');
+  const showMixer = useCallback(() => {
+    console.log("App: Showing mixer view");
     setSelectedChannelIndex(null);
-    setCurrentView('mixer');
-  };
+    setCurrentView("mixer");
+  }, []); // Using useCallback
+
+  // --- Functions to control the inferencing modal ---
+  const openInferenceModal = useCallback(() => {
+    console.log("App: Opening inference modal");
+    setIsInferencingModalOpen(true);
+  }, []);
+
+  const closeInferenceModal = useCallback(() => {
+    console.log("App: Closing inference modal");
+    setIsInferencingModalOpen(false);
+    // Optionally reset any inferencing-related state here if needed upon close
+  }, []);
+  // --- End modal functions ---
 
   return (
     <MantineProvider>
-    <div className="App">
-      {currentView === 'mixer' && <MixerConsole onShowEffects={showEffects} />}
-      {currentView === 'effects' && (
-        <EffectsConsole
-          selectedChannelIndex={selectedChannelIndex}
-          onClose={showMixer} // Pass function to close effects view
+      <div className="App">
+        {" "}
+        {/* Consider adding relative positioning if modal needs it */}
+        {currentView === "mixer" && (
+          <MixerConsole
+            onShowEffects={showEffects}
+            onStartInferencing={openInferenceModal} // Pass handler to open modal
+          />
+        )}
+        {currentView === "effects" && (
+          <EffectsConsole
+            selectedChannelIndex={selectedChannelIndex}
+            onClose={showMixer}
+            onStartInferencing={openInferenceModal} // Pass handler to open modal
+          />
+        )}
+        {/* Render the Modal conditionally */}
+        <InferenceModal
+          isOpen={isInferencingModalOpen}
+          onClose={closeInferenceModal}
         />
-      )}
-    </div></MantineProvider>
+      </div>
+    </MantineProvider>
   );
 }
 

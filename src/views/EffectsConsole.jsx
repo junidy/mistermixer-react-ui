@@ -9,7 +9,7 @@ import EffectsArea from '../components/EffectsArea';
  * @param {number} props.selectedChannelIndex - Index of the channel whose effects are shown.
  * @param {function} props.onClose - Callback to go back to MixerConsole view.
  */
-function EffectsConsole({ selectedChannelIndex, onClose }) {
+function EffectsConsole({ selectedChannelIndex, onClose, onStartInferencing }) {
   const isMasterSelected = selectedChannelIndex === 0;
   const masterChannelIndex = 0;
   const dummyOnShowEffects = () => {};
@@ -17,7 +17,7 @@ function EffectsConsole({ selectedChannelIndex, onClose }) {
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       {/* Pass showBackButton={true} and the onClose handler */}
-      <MixerHeader showBackButton={true} onBackClick={onClose} />
+      <MixerHeader showBackButton={true} onBackClick={onClose} onStartInferencing={onStartInferencing} />
 
       {/* --- Main Content Row: Takes remaining space, horizontal flex --- */}
       <div className="flex-grow flex flex-row flex-nowrap min-h-0">
