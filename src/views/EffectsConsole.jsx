@@ -1,7 +1,7 @@
 import React from 'react';
 import ChannelStrip from '../components/ChannelStrip';
 import MixerHeader from '../components/MixerHeader';
-import EffectsArea from '../components/EffectsArea'; // Import the new component
+import EffectsArea from '../components/EffectsArea';
 
 /**
  * EffectsConsole View
@@ -11,19 +11,13 @@ import EffectsArea from '../components/EffectsArea'; // Import the new component
  */
 function EffectsConsole({ selectedChannelIndex, onClose }) {
   const isMasterSelected = selectedChannelIndex === 0;
-
-  // We still need the master channel strip (index 0) for the right side
   const masterChannelIndex = 0;
-
-  // Note: The 'onShowEffects' prop isn't strictly needed on strips in this view,
-  // but passing it harmlessly simplifies ChannelStrip's props interface.
-  // OR you could modify ChannelStrip to make it optional.
   const dummyOnShowEffects = () => {};
 
   return (
-    // --- Outer Container: Full height, vertical flex ---
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
-      <MixerHeader />
+      {/* Pass showBackButton={true} and the onClose handler */}
+      <MixerHeader showBackButton={true} onBackClick={onClose} />
 
       {/* --- Main Content Row: Takes remaining space, horizontal flex --- */}
       <div className="flex-grow flex flex-row flex-nowrap min-h-0">
