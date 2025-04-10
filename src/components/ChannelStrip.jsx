@@ -1,4 +1,7 @@
+import useMixerStore from "../store/mixerStore";
 import React from "react";
+import KnobPan from "./KnobPan";
+import KnobDb from "./KnobDb";
 // Assuming you'll add actual controls later, we use placeholders for now
 // import { Slider, Button, Group, Switch } from '@mantine/core'; // Example if using Mantine later
 // import PlaceholderKnob from './PlaceholderKnob';
@@ -10,6 +13,21 @@ import React from "react";
  * @param {boolean} props.isMaster - True if this is the master channel strip.
  */
 function ChannelStrip({ channelIndex, isMaster, onShowEffects }) {
+  // --- Select State from Store ---
+const panValue = useMixerStore(
+    // Check state and state.channels before indexing
+    (state) => state?.channels?.[channelIndex]?.panning ?? 0.5
+  );
+  const analogGainValue = useMixerStore(
+    // Check state and state.channels before indexing
+    (state) => state?.channels?.[channelIndex]?.analog_gain ?? 0 // Use default from schema if state not ready
+  );
+  // ... select other needed state values ...
+
+  // --- Get Actions from Store ---
+  const setPanning = useMixerStore((state) => state.setPanning);
+  const setAnalogGain = useMixerStore((state) => state.setAnalogGain);
+
   // Added onShowEffects prop
   const channelLabel = isMaster ? "Master" : `CH ${channelIndex}`;
   const bgColor = isMaster ? "bg-gray-100" : "bg-white";
@@ -45,10 +63,15 @@ function ChannelStrip({ channelIndex, isMaster, onShowEffects }) {
         {/* Placeholder for Analog Gain Knob - Use w-full if needed */}
         {!isMaster && (
           <div className="flex justify-center mb-2">
-            <div className="text-center p-2 border border-dashed border-gray-400 rounded-full w-16 h-16 flex flex-col justify-center items-center">
-              <span className="text-xs text-gray-500 block">Analog</span>
-              <span className="text-xs text-gray-500 block">Gain</span>
-            </div>
+            <KnobDb
+              label="Analog Gain"
+              value={analogGainValue}
+              onChange={(val) => setAnalogGain(channelIndex, val)}
+              min={-12.0}
+              max={32.0}
+              // Optional: Adjust size/color if needed
+              // size={56}
+            />
           </div>
         )}
         {/* --- Effects Button - Updated --- */}
@@ -83,15 +106,15 @@ function ChannelStrip({ channelIndex, isMaster, onShowEffects }) {
       {/* --- Bottom Section (Fixed Height Content) --- */}
       <div className="flex-shrink-0 w-full mt-2">
         {" "}
-        {/* Prevents this section from shrinking */}
-        {/* Placeholder for Pan Knob */}
-        {!isMaster && (
-          <div className="flex justify-center mb-2">
-            <div className="text-center p-2 border border-dashed border-gray-400 rounded-full w-16 h-16 flex flex-col justify-center items-center">
-              <span className="text-xs text-gray-500 block">Pan</span>
-            </div>
-          </div>
-        )}
+        {/* Use the specific KnobPan component */}
+        <div className="flex justify-center mb-2">
+          <KnobPan
+            value={panValue}
+            onChange={(val) => setPanning(channelIndex, val)}
+            // Optional: Adjust size/color
+            // size={56}
+          />
+        </div>
         {/* Stereo Toggle (Master Only) */}
         {isMaster && (
           <div className="flex items-center justify-center text-xs md:text-sm">

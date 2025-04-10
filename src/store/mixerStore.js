@@ -1,359 +1,255 @@
-import { create } from "zustand";
-import { applyPatch } from "fast-json-patch";
-import { sendMessage } from "../services/websocketService"; // Import send function
+// src/store/mixerStore.js
+import { create } from 'zustand';
+import { applyPatch } from 'fast-json-patch';
+import { sendMessage } from '../services/websocketService'; // Adjust path if needed
 
 // --- Configuration ---
-const DEBOUNCE_DELAY_MS = 66; // Approx 15 updates per second
+const THROTTLE_DELAY_MS = 20; // Approx 20 updates per second
 
-// --- Debounce Management (Module Scope) ---
-// Stores timeout IDs for debounced patch sends, keyed by JSON Pointer path
-let debounceTimers = {};
+// --- Module-level state for throttling ---
+let throttleTimers = {};
+let lastValueSent = {};
+let valueToSendOnThrottleEnd = {};
 
 // --- State Initialization ---
-// Helper to create a default channel state based on schema defaults/mins
 const createDefaultChannel = (index) => {
-  // Pass index here
-  const isMainBus = index === 0;
-  let defaultAnalogGain = 0.0; // Default for Master Bus (index 0)
-  if (index >= 1 && index <= 4) {
-    // Channels 1-4 (XLR)
-    defaultAnalogGain = -3.0;
-  } else if (index >= 5 && index <= 8) {
-    // Channels 5-8 (TS)
-    defaultAnalogGain = -9.0;
-  }
-
-  return {
-    muted: false,
-    soloed: false,
-    panning: 0.5,
-    digital_gain: 0.0,
-    analog_gain: defaultAnalogGain, // <-- ADDED with default logic
-    stereo: isMainBus,
-    equalizer: {
-      enabled: false,
-      lowShelf: { gain_db: 0.0, cutoff_freq: 80, q_factor: 0.707 },
-      highShelf: { gain_db: 0.0, cutoff_freq: 12000, q_factor: 0.707 },
-      band0: { gain_db: 0.0, cutoff_freq: 250, q_factor: 1.0 },
-      band1: { gain_db: 0.0, cutoff_freq: 1000, q_factor: 1.0 },
-      band2: { gain_db: 0.0, cutoff_freq: 4000, q_factor: 1.0 },
-      band3: { gain_db: 0.0, cutoff_freq: 10000, q_factor: 1.0 },
-    },
-    compressor: {
-      enabled: false,
-      threshold_db: -20.0,
-      ratio: 2.0,
-      attack_ms: 10.0,
-      release_ms: 50.0,
-      knee_db: 0.0,
-      makeup_gain_db: 0.0,
-    },
-    distortion: { enabled: false, drive: 0.0, output_gain_db: 0.0 },
-    phaser: { enabled: false, rate: 1.0, depth: 50.0 },
-    reverb: { enabled: isMainBus, decay_time: 1.5, wet_level: 25.0 },
-  };
+    const isMainBus = index === 0;
+    let defaultAnalogGain = 0.0;
+    if (1 <= index <= 4) { defaultAnalogGain = -3.0; }
+    else if (5 <= index <= 8) { defaultAnalogGain = -9.0; }
+    return {
+        muted: false, soloed: false, panning: 0.5, digital_gain: 0.0,
+        analog_gain: defaultAnalogGain, stereo: isMainBus,
+        equalizer: { enabled: false, lowShelf: { gain_db: 0.0, cutoff_freq: 80, q_factor: 0.707 }, highShelf: { gain_db: 0.0, cutoff_freq: 12000, q_factor: 0.707 }, band0: { gain_db: 0.0, cutoff_freq: 250, q_factor: 1.0 }, band1: { gain_db: 0.0, cutoff_freq: 1000, q_factor: 1.0 }, band2: { gain_db: 0.0, cutoff_freq: 4000, q_factor: 1.0 }, band3: { gain_db: 0.0, cutoff_freq: 10000, q_factor: 1.0 }, },
+        compressor: { enabled: false, threshold_db: -20.0, ratio: 2.0, attack_ms: 10.0, release_ms: 50.0, knee_db: 0.0, makeup_gain_db: 0.0, },
+        distortion: { enabled: false, drive: 0.0, output_gain_db: 0.0 },
+        phaser: { enabled: false, rate: 1.0, depth: 50.0 },
+        reverb: { enabled: isMainBus, decay_time: 1.5, wet_level: 25.0 },
+    };
 };
-
-// Define the initial state based on the schema
 const initialState = {
-  channels: Array.from({ length: 9 }, (_, index) =>
-    createDefaultChannel(index)
-  ), // Pass index
-  soloing_active: false, // Read-only from server probably
-  inferencing_active: false, // Might be controllable or read-only
-  hw_init_ready: false, // Read-only from server probably
-  // Internal UI state, not part of the synced schema
-  connectionStatus: "disconnected",
+    channels: Array.from({ length: 9 }, (_, index) => createDefaultChannel(index)),
+    soloing_active: false, inferencing_active: false, hw_init_ready: false,
+    connectionStatus: 'disconnected',
 };
 
 // --- Zustand Store Definition ---
 export const useMixerStore = create((set, get) => ({
-  ...initialState,
+    ...initialState,
 
-  // --- Server Update Application ---
-  // Called by websocketService when a message (patch or full state) arrives
-  applyServerUpdate: (update) => {
-    set((state) => {
-      // Keep track if the state actually changed
-      let stateChanged = false;
-      let newState = state;
+    // --- Server Update / Connection Status (Unchanged) ---
+// --- Server Update Application ---
+    // Called by websocketService when a message (patch or full state) arrives
+    applyServerUpdate: (update) => {
+      set((state) => { // Use the 'updater function' form of set
+          // Keep track if the state actually changed to optimize re-renders
+          let stateChanged = false;
+          let newState = state; // Start with the current state
 
-      if (Array.isArray(update)) {
-        // JSON Patch array
-        try {
-          // Use fast-json-patch to apply the changes immutably
-          // The 'mutate' option is false by default, returning a new object
-          const patchResult = applyPatch(
-            state,
-            update,
-            /*validate*/ false,
-            /*mutate*/ false
-          );
-          newState = patchResult.newDocument;
-          // Check if the root object reference changed
-          stateChanged = newState !== state;
-        } catch (e) {
-          console.error("Failed to apply JSON Patch:", e, "Patch:", update);
-          // Don't change state on error
+          if (Array.isArray(update)) { // JSON Patch array
+              try {
+                  // Use fast-json-patch to apply the changes immutably
+                  // The 'mutate' option is false by default, returning a new object
+                  // The 'validate' option is false for slight performance gain (trust server)
+                  const patchResult = applyPatch(state, update, /*validate*/ false, /*mutate*/ false);
+                  newState = patchResult.newDocument; // Get the potentially new state object
+
+                  // Check if the root object reference changed; indicates a change occurred.
+                  // Note: fast-json-patch *might* return the same object reference if the patch
+                  // resulted in no actual value changes (e.g., replacing 'a' with 'a').
+                  // A deep comparison could be added here if that edge case matters,
+                  // but usually reference check is sufficient for performance optimization.
+                  stateChanged = newState !== state;
+
+                  if (!stateChanged) {
+                     console.debug("Received patch resulted in no state change.");
+                  }
+
+              } catch (e) {
+                  console.error('Failed to apply JSON Patch:', e, 'Patch:', update);
+                  // Don't change state on error, return the original state
+                  newState = state;
+                  stateChanged = false;
+              }
+          } else if (typeof update === 'object' && update !== null && update.channels && Array.isArray(update.channels)) {
+               // It looks like a full state object overwrite
+               // Check if it's different enough to warrant an update
+               // (Simple stringify comparison, could be more granular if needed)
+              if (JSON.stringify(state.channels) !== JSON.stringify(update.channels) ||
+                  state.soloing_active !== update.soloing_active ||
+                  state.inferencing_active !== update.inferencing_active ||
+                  state.hw_init_ready !== update.hw_init_ready )
+              {
+                  console.log("Applying full state update from server.");
+                  // Overwrite state, but preserve local connectionStatus
+                  newState = { ...update, connectionStatus: state.connectionStatus };
+                  stateChanged = true;
+              } else {
+                   console.debug("Received full state object, but it matches current state.");
+                   newState = state; // No change needed
+                   stateChanged = false;
+              }
+
+          } else {
+              console.warn("Received unknown update format from server:", update);
+               newState = state; // No change for unknown format
+               stateChanged = false;
+          }
+
+          // IMPORTANT: Only return a new object reference if the state *actually* changed.
+          // This prevents Zustand from triggering unnecessary re-renders in components
+          // if the incoming update was redundant.
+          return stateChanged ? newState : state;
+      }); // End of set updater function
+  }, // End of applyServerUpdate
+    setConnectionStatus: (status) => { set({ connectionStatus: status }); },
+
+    // --- Helper functions DEFINED AS PART OF THE RETURNED OBJECT ---
+    _sendPatchInternal: (path, value) => { /* ... (Same as previous correct version) ... */
+        const patch = [{ op: 'replace', path, value }];
+        sendMessage(patch);
+        lastValueSent[path] = value;
+        if (Object.prototype.hasOwnProperty.call(valueToSendOnThrottleEnd, path) && valueToSendOnThrottleEnd[path] === value) {
+             delete valueToSendOnThrottleEnd[path];
+         }
+    },
+    _throttleSendPatch: (path, value) => { /* ... (Same as previous correct version) ... */
+        valueToSendOnThrottleEnd[path] = value;
+        if (!throttleTimers[path]) {
+            get()._sendPatchInternal(path, value); // Use get()
+            throttleTimers[path] = setTimeout(() => {
+                const timerPath = path;
+                delete throttleTimers[timerPath];
+                const hasLastSent = Object.prototype.hasOwnProperty.call(lastValueSent, timerPath);
+                const hasPendingEndValue = Object.prototype.hasOwnProperty.call(valueToSendOnThrottleEnd, timerPath);
+                if (hasPendingEndValue && (!hasLastSent || lastValueSent[timerPath] !== valueToSendOnThrottleEnd[timerPath])) {
+                    get()._throttleSendPatch(timerPath, valueToSendOnThrottleEnd[timerPath]); // Use get()
+                } else if (hasPendingEndValue) {
+                    delete valueToSendOnThrottleEnd[timerPath];
+                }
+            }, THROTTLE_DELAY_MS);
         }
-      } else if (
-        typeof update === "object" &&
-        update !== null &&
-        update.channels
-      ) {
-        // Full state object
-        console.log("Applying full state update from server.");
-        // Compare if necessary or just assume change
-        stateChanged =
-          JSON.stringify(state.channels) !== JSON.stringify(update.channels); // || /* compare other top-level keys */;
-        // Overwrite state, preserving local connectionStatus
-        newState = { ...update, connectionStatus: state.connectionStatus };
-      } else {
-        console.warn("Received unknown update format from server:", update);
-      }
+    },
+    // --- End Helper Definitions ---
 
-      // Only return a new object reference if the state actually changed
-      // This prevents unnecessary re-renders if the incoming patch was redundant
-      // Note: fast-json-patch might return the same object reference if no changes occurred.
-      // You might need a deeper comparison if patch library behavior varies.
-      return stateChanged ? newState : state;
-    });
-  },
+    // --- UI Triggered Actions ---
 
-  // --- Connection Status ---
-  setConnectionStatus: (status) => {
-    set({ connectionStatus: status });
-  },
+    // ** Channel Parameters **
+    setMuted: (channelIndex, isMuted) => {
+        const path = `/channels/${channelIndex}/muted`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].muted = isMuted; return newState; });
+        get()._sendPatchInternal(path, isMuted);
+    },
+    setSoloed: (channelIndex, isSoloed) => {
+        const path = `/channels/${channelIndex}/soloed`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].soloed = isSoloed; return newState; });
+        get()._sendPatchInternal(path, isSoloed);
+    },
+    setPanning: (channelIndex, panValue) => {
+        const path = `/channels/${channelIndex}/panning`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].panning = panValue; return newState; });
+        get()._throttleSendPatch(path, panValue);
+    },
+    setDigitalGain: (channelIndex, gainDb) => {
+        const path = `/channels/${channelIndex}/digital_gain`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].digital_gain = gainDb; return newState; });
+        get()._throttleSendPatch(path, gainDb);
+    },
+    setAnalogGain: (channelIndex, gainDb) => {
+        const path = `/channels/${channelIndex}/analog_gain`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].analog_gain = gainDb; return newState; });
+        get()._throttleSendPatch(path, gainDb);
+    },
+     setStereo: (channelIndex, isStereo) => { // Only relevant for channel 0 usually
+        const path = `/channels/${channelIndex}/stereo`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].stereo = isStereo; return newState; });
+        get()._sendPatchInternal(path, isStereo); // Toggle, send immediately
+    },
 
-  // --- Patch Sending Helpers ---
-  /**
-   * Sends a patch immediately (for toggles, etc.).
-   * @param {string} path - JSON Pointer path
-   * @param {*} value - The new value
-   */
-  _sendPatch: (path, value) => {
-    const patch = [{ op: "replace", path, value }];
-    // console.log('Sending Patch Immediately:', patch); // Verbose logging
-    sendMessage(patch);
-  },
+    // ** Equalizer Parameters **
+    setEqEnabled: (channelIndex, enabled) => {
+        const path = `/channels/${channelIndex}/equalizer/enabled`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].equalizer.enabled = enabled; return newState; });
+        get()._sendPatchInternal(path, enabled);
+    },
+    setEqBandParam: (channelIndex, bandName, paramName, value) => {
+        const path = `/channels/${channelIndex}/equalizer/${bandName}/${paramName}`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].equalizer[bandName][paramName] = value; return newState; });
+        get()._throttleSendPatch(path, value);
+    },
 
-  /**
-   * Debounces sending a patch (for sliders, knobs, etc.).
-   * @param {string} path - JSON Pointer path
-   * @param {*} value - The new value
-   */
-  _debounceSendPatch: (path, value) => {
-    // Clear any existing timer for this specific path
-    if (debounceTimers[path]) {
-      clearTimeout(debounceTimers[path]);
-    }
-    // Set a new timer
-    debounceTimers[path] = setTimeout(() => {
-      get()._sendPatch(path, value); // Call the immediate send function after delay
-      delete debounceTimers[path]; // Clean up the timer ID reference
-    }, DEBOUNCE_DELAY_MS);
-  },
+    // === START: Filling in remaining actions ===
 
-  // --- UI Triggered Actions (Optimistic Updates + Patch Sending) ---
+    // ** Compressor Parameters **
+    setCompressorEnabled: (channelIndex, enabled) => {
+        const path = `/channels/${channelIndex}/compressor/enabled`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].compressor.enabled = enabled; return newState; });
+        get()._sendPatchInternal(path, enabled);
+    },
+    setCompressorParam: (channelIndex, paramName, value) => {
+        // paramName: threshold_db, ratio, attack_ms, release_ms, knee_db, makeup_gain_db
+        const path = `/channels/${channelIndex}/compressor/${paramName}`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].compressor[paramName] = value; return newState; });
+        get()._throttleSendPatch(path, value); // All compressor params are continuous
+    },
 
-  // ** Channel Parameters **
-  setMuted: (channelIndex, isMuted) => {
-    const path = `/channels/${channelIndex}/muted`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state)); // Deep copy for safety
-      newState.channels[channelIndex].muted = isMuted;
-      return newState;
-    });
-    get()._sendPatch(path, isMuted); // Send immediately
-  },
+    // ** Distortion Parameters **
+    setDistortionEnabled: (channelIndex, enabled) => {
+        const path = `/channels/${channelIndex}/distortion/enabled`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].distortion.enabled = enabled; return newState; });
+        get()._sendPatchInternal(path, enabled);
+    },
+    setDistortionParam: (channelIndex, paramName, value) => {
+        // paramName: drive, output_gain_db
+        const path = `/channels/${channelIndex}/distortion/${paramName}`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].distortion[paramName] = value; return newState; });
+        get()._throttleSendPatch(path, value); // Both drive and output gain are continuous
+    },
 
-  setSoloed: (channelIndex, isSoloed) => {
-    const path = `/channels/${channelIndex}/soloed`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].soloed = isSoloed;
-      // Note: soloing_active should be updated by the server based on all solo states
-      return newState;
-    });
-    get()._sendPatch(path, isSoloed); // Send immediately
-  },
+    // ** Phaser Parameters **
+    setPhaserEnabled: (channelIndex, enabled) => {
+        const path = `/channels/${channelIndex}/phaser/enabled`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].phaser.enabled = enabled; return newState; });
+        get()._sendPatchInternal(path, enabled);
+    },
+    setPhaserParam: (channelIndex, paramName, value) => {
+        // paramName: rate, depth
+        const path = `/channels/${channelIndex}/phaser/${paramName}`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].phaser[paramName] = value; return newState; });
+        get()._throttleSendPatch(path, value); // Both rate and depth are continuous
+    },
 
-  setPanning: (channelIndex, panValue) => {
-    const path = `/channels/${channelIndex}/panning`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].panning = panValue;
-      return newState;
-    });
-    get()._debounceSendPatch(path, panValue); // Debounce
-  },
+    // ** Reverb Parameters **
+    setReverbEnabled: (channelIndex, enabled) => {
+        const path = `/channels/${channelIndex}/reverb/enabled`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].reverb.enabled = enabled; return newState; });
+        get()._sendPatchInternal(path, enabled);
+    },
+    setReverbParam: (channelIndex, paramName, value) => {
+        // paramName: decay_time, wet_level
+        const path = `/channels/${channelIndex}/reverb/${paramName}`;
+        set((state) => { const newState = JSON.parse(JSON.stringify(state)); newState.channels[channelIndex].reverb[paramName] = value; return newState; });
+        get()._throttleSendPatch(path, value); // Both decay and wet level are continuous
+    },
 
-  setDigitalGain: (channelIndex, gainDb) => {
-    const path = `/channels/${channelIndex}/digital_gain`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].digital_gain = gainDb;
-      return newState;
-    });
-    get()._debounceSendPatch(path, gainDb); // Debounce
-  },
+    // ** Top-Level Flags **
+    setInferencingActive: (isActive) => {
+        const path = `/inferencing_active`;
+        // Optimistic update for inferencing flag
+        set((state) => ({ ...state, inferencing_active: isActive }));
+        get()._sendPatchInternal(path, isActive); // Send toggle immediately
+    },
+    // Note: soloing_active and hw_init_ready are typically read-only from the
+    // perspective of the UI client, managed by the backend state_manager.py.
+    // If you needed the UI to *set* hw_init_ready (unlikely), you'd add an action:
+    // setHwInitReady: (isReady) => {
+    //    const path = `/hw_init_ready`;
+    //    set((state) => ({ ...state, hw_init_ready: isReady }));
+    //    get()._sendPatchInternal(path, isReady);
+    // },
 
-  setAnalogGain: (channelIndex, gainDb) => {
-    const path = `/channels/${channelIndex}/analog_gain`;
-    set((state) => {
-      /* Optimistic Update */
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].analog_gain = gainDb;
-      return newState;
-    });
-    get()._debounceSendPatch(path, gainDb); // Debounce
-  },
+    // === END: Filling in remaining actions ===
 
-  // ** Equalizer Parameters **
-  setEqEnabled: (channelIndex, enabled) => {
-    const path = `/channels/${channelIndex}/equalizer/enabled`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].equalizer.enabled = enabled;
-      return newState;
-    });
-    get()._sendPatch(path, enabled); // Send immediately
-  },
+})); // --- End of create ---
 
-  setEqBandParam: (channelIndex, bandName, paramName, value) => {
-    // bandName: lowShelf, highShelf, band0, band1, band2, band3
-    // paramName: gain_db, cutoff_freq, q_factor
-    const path = `/channels/${channelIndex}/equalizer/${bandName}/${paramName}`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].equalizer[bandName][paramName] = value;
-      return newState;
-    });
-    get()._debounceSendPatch(path, value); // Debounce
-  },
-
-  // ** Compressor Parameters **
-  setCompressorEnabled: (channelIndex, enabled) => {
-    const path = `/channels/${channelIndex}/compressor/enabled`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].compressor.enabled = enabled;
-      return newState;
-    });
-    get()._sendPatch(path, enabled); // Send immediately
-  },
-
-  setCompressorParam: (channelIndex, paramName, value) => {
-    // paramName: threshold_db, ratio, attack_ms, release_ms, knee_db, makeup_gain_db
-    const path = `/channels/${channelIndex}/compressor/${paramName}`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].compressor[paramName] = value;
-      return newState;
-    });
-    get()._debounceSendPatch(path, value); // Debounce
-  },
-
-  // ** Distortion Parameters **
-  setDistortionEnabled: (channelIndex, enabled) => {
-    const path = `/channels/${channelIndex}/distortion/enabled`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].distortion.enabled = enabled;
-      return newState;
-    });
-    get()._sendPatch(path, enabled); // Send immediately
-  },
-
-  setDistortionParam: (channelIndex, paramName, value) => {
-    // paramName: drive, output_gain_db
-    const path = `/channels/${channelIndex}/distortion/${paramName}`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].distortion[paramName] = value;
-      return newState;
-    });
-    // Drive is like a knob, output gain maybe less frequent - decide debounce per param
-    if (paramName === "drive") {
-      get()._debounceSendPatch(path, value); // Debounce drive
-    } else {
-      get()._sendPatch(path, value); // Send output gain immediately (or debounce too if needed)
-    }
-  },
-
-  // ** Phaser Parameters **
-  setPhaserEnabled: (channelIndex, enabled) => {
-    const path = `/channels/${channelIndex}/phaser/enabled`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].phaser.enabled = enabled;
-      return newState;
-    });
-    get()._sendPatch(path, enabled); // Send immediately
-  },
-
-  setPhaserParam: (channelIndex, paramName, value) => {
-    // paramName: rate, depth
-    const path = `/channels/${channelIndex}/phaser/${paramName}`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].phaser[paramName] = value;
-      return newState;
-    });
-    get()._debounceSendPatch(path, value); // Debounce rate and depth
-  },
-
-  // ** Reverb Parameters (Likely only on Main Bus - Channel 0) **
-  setReverbEnabled: (channelIndex, enabled) => {
-    // Usually channelIndex = 0
-    const path = `/channels/${channelIndex}/reverb/enabled`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].reverb.enabled = enabled;
-      return newState;
-    });
-    get()._sendPatch(path, enabled); // Send immediately
-  },
-
-  setReverbParam: (channelIndex, paramName, value) => {
-    // Usually channelIndex = 0
-    // paramName: decay_time, wet_level
-    const path = `/channels/${channelIndex}/reverb/${paramName}`;
-    set((state) => {
-      // Optimistic Update
-      const newState = JSON.parse(JSON.stringify(state));
-      newState.channels[channelIndex].reverb[paramName] = value;
-      return newState;
-    });
-    get()._debounceSendPatch(path, value); // Debounce decay and wet level
-  },
-
-  // ** Top-Level Flags (If UI needs control) **
-  // Example: Allow UI to toggle inferencing if needed
-  setInferencingActive: (isActive) => {
-    const path = `/inferencing_active`;
-    set((state) => ({
-      // Optimistic Update
-      ...state,
-      inferencing_active: isActive,
-    }));
-    // Send immediately regardless of true/false
-    get()._sendPatch(path, isActive);
-  },
-}));
-
-// Export the hook
 export default useMixerStore;
