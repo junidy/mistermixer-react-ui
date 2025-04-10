@@ -1,0 +1,296 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Mixer State Schema",
+  "description": "Defines the structure and parameter ranges for the digital mixer state.",
+  "type": "object",
+  "properties": {
+    "channels": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": {
+        "$ref": "#/definitions/ChannelParameters"
+      },
+      "description": "Array of channel parameters. Index 0 is the main bus, indices 1-8 correspond to input channels 1-8."
+    },
+    "soloing_active": {
+      "type": "boolean",
+      "description": "Indicates if one or more channels are currently soloed."
+    },
+    "inferencing_active": {
+      "type": "boolean",
+      "description": "Indicates if audio inferencing (streaming to Pi) is active."
+    },
+    "hw_init_ready": {
+      "type": "boolean",
+      "description": "Indicates if audio hardware (ADCs/DACs) is initialized and DSP can run."
+    }
+  },
+  "required": [
+    "channels",
+    "soloing_active",
+    "inferencing_active",
+    "hw_init_ready"
+  ],
+  "definitions": {
+    "ChannelParameters": {
+      "type": "object",
+      "properties": {
+        "muted": {
+          "type": "boolean",
+          "description": "Channel mute state (true = muted)."
+        },
+        "soloed": {
+          "type": "boolean",
+          "description": "Channel solo state (true = soloed)."
+        },
+        "panning": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.5,
+          "description": "Stereo panning (0.0 = Left, 0.5 = Center, 1.0 = Right)."
+        },
+        "digital_gain": {
+          "type": "number",
+          "minimum": -60.0,
+          "maximum": 6.0,
+          "unit": "dB",
+          "description": "Channel digital gain adjustment (-60 dB is effectively -infinity)."
+        },
+        "analog_gain": {
+          "type": "number",
+          "minimum": -12.0,
+          "maximum": 32.0,
+          "unit": "dB",
+          "description": "Channel analog gain adjustment (Input gain stage)."
+        },
+        "stereo": {
+          "type": "boolean",
+          "description": "Indicates if the channel is stereo (primarily relevant for the main channel)."
+        },
+        "equalizer": {
+          "$ref": "#/definitions/EqualizerParameters"
+        },
+        "compressor": {
+          "$ref": "#/definitions/CompressorParameters"
+        },
+        "distortion": {
+          "$ref": "#/definitions/DistortionParameters"
+        },
+        "phaser": {
+          "$ref": "#/definitions/PhaserParameters"
+        },
+        "reverb": {
+          "$ref": "#/definitions/ReverbParameters"
+        }
+      },
+      "required": [
+        "muted",
+        "soloed",
+        "panning",
+        "digital_gain",
+        "stereo",
+        "equalizer",
+        "compressor",
+        "distortion",
+        "phaser",
+        "reverb"
+      ]
+    },
+    "EqualizerBandParameters": {
+       "type": "object",
+       "properties": {
+         "gain_db": { "type": "number", "minimum": -48.0, "maximum": 24.0, "unit": "dB" },
+         "cutoff_freq": { "type": "number", "unit": "Hz" },
+         "q_factor": { "type": "number", "minimum": 0.1, "maximum": 6.0 }
+       },
+       "required": ["gain_db", "cutoff_freq", "q_factor"]
+    },
+    "EqualizerParameters": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable/disable Equalizer processing for the channel."
+        },
+        "lowShelf": {
+          "allOf": [ { "$ref": "#/definitions/EqualizerBandParameters" } ],
+          "properties": { "cutoff_freq": { "minimum": 20, "maximum": 2000 } }
+        },
+        "highShelf": {
+           "allOf": [ { "$ref": "#/definitions/EqualizerBandParameters" } ],
+           "properties": { "cutoff_freq": { "minimum": 4000, "maximum": 23000, "description": "Max freq assumes ~48kHz sample rate" } }
+        },
+        "band0": {
+          "allOf": [ { "$ref": "#/definitions/EqualizerBandParameters" } ],
+          "properties": { "cutoff_freq": { "minimum": 80, "maximum": 2000 } }
+        },
+        "band1": {
+          "allOf": [ { "$ref": "#/definitions/EqualizerBandParameters" } ],
+          "properties": { "cutoff_freq": { "minimum": 2000, "maximum": 8000 } }
+        },
+        "band2": {
+           "allOf": [ { "$ref": "#/definitions/EqualizerBandParameters" } ],
+           "properties": { "cutoff_freq": { "minimum": 8000, "maximum": 12000 } }
+        },
+        "band3": {
+           "allOf": [ { "$ref": "#/definitions/EqualizerBandParameters" } ],
+           "properties": { "cutoff_freq": { "minimum": 12000, "maximum": 23000, "description": "Max freq assumes ~48kHz sample rate" } }
+        }
+      },
+      "required": [
+        "enabled",
+        "lowShelf",
+        "highShelf",
+        "band0",
+        "band1",
+        "band2",
+        "band3"
+      ]
+    },
+    "CompressorParameters": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable/disable Compressor processing for the channel."
+        },
+        "threshold_db": {
+          "type": "number",
+          "minimum": -60.0,
+          "maximum": 0.0,
+          "unit": "dB",
+          "description": "Level above which compression starts."
+        },
+        "ratio": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 20.0,
+          "description": "Compression ratio (N:1). 1.0 means no compression."
+        },
+        "attack_ms": {
+          "type": "number",
+          "minimum": 5.0,
+          "maximum": 100.0,
+          "unit": "ms",
+          "description": "Time to reach full compression after threshold is exceeded."
+        },
+        "release_ms": {
+          "type": "number",
+          "minimum": 5.0,
+          "maximum": 100.0,
+          "unit": "ms",
+          "description": "Time to release compression after signal drops below threshold."
+        },
+        "knee_db": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 12.0,
+          "unit": "dB",
+          "description": "Width of the 'soft knee' transition around the threshold."
+        },
+        "makeup_gain_db": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 12.0,
+          "unit": "dB",
+          "description": "Gain applied after compression to compensate for level reduction."
+        }
+      },
+      "required": [
+        "enabled",
+        "threshold_db",
+        "ratio",
+        "attack_ms",
+        "release_ms",
+        "knee_db",
+        "makeup_gain_db"
+      ]
+    },
+    "DistortionParameters": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable/disable Distortion processing for the channel."
+        },
+        "drive": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 20.0,
+          "unit": "dB",
+          "description": "Amount of distortion applied."
+        },
+        "output_gain_db": {
+          "type": "number",
+          "minimum": -20.0,
+          "maximum": 0.0,
+          "unit": "dB",
+          "description": "Output level adjustment after distortion."
+        }
+      },
+      "required": [
+        "enabled",
+        "drive",
+        "output_gain_db"
+      ]
+    },
+    "PhaserParameters": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable/disable Phaser processing for the channel."
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10.0,
+          "unit": "Hz",
+          "description": "Speed of the phasing effect (Logarithmic scaling recommended for UI)."
+        },
+        "depth": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "unit": "%",
+          "description": "Intensity/sweep range of the phasing effect."
+        }
+      },
+      "required": [
+        "enabled",
+        "rate",
+        "depth"
+      ]
+    },
+    "ReverbParameters": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable/disable Reverb processing (Typically only on the main bus)."
+        },
+        "decay_time": {
+          "type": "number",
+          "minimum": 0.3,
+          "maximum": 3.0,
+          "unit": "seconds",
+          "description": "Time for the reverb tail to decay."
+        },
+        "wet_level": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "unit": "%",
+          "description": "Amount of reverberated signal mixed with the dry signal."
+        }
+      },
+      "required": [
+        "enabled",
+        "decay_time",
+        "wet_level"
+      ]
+    }
+  }
+}

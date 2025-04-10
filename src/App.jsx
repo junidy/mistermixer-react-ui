@@ -1,35 +1,38 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import React, { useState } from 'react';
+import MixerConsole from './views/MixerConsole'; // Assuming views are in src/views
+import EffectsConsole from './views/EffectsConsole';
+import { MantineProvider } from '@mantine/core';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [currentView, setCurrentView] = useState('mixer'); // 'mixer' or 'effects'
+  const [selectedChannelIndex, setSelectedChannelIndex] = useState(null); // 0-8
+
+  // Function passed down to trigger showing effects view
+  const showEffects = (channelIndex) => {
+    console.log(`App: Showing effects for channel ${channelIndex}`);
+    setSelectedChannelIndex(channelIndex);
+    setCurrentView('effects');
+  };
+
+  // Function passed down to trigger going back to mixer view
+  const showMixer = () => {
+    console.log('App: Showing mixer view');
+    setSelectedChannelIndex(null);
+    setCurrentView('mixer');
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <MantineProvider>
+    <div className="App">
+      {currentView === 'mixer' && <MixerConsole onShowEffects={showEffects} />}
+      {currentView === 'effects' && (
+        <EffectsConsole
+          selectedChannelIndex={selectedChannelIndex}
+          onClose={showMixer} // Pass function to close effects view
+        />
+      )}
+    </div></MantineProvider>
+  );
 }
 
-export default App
+export default App;
