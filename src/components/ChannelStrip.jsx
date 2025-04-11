@@ -2,6 +2,7 @@ import useMixerStore from "../store/mixerStore";
 import React from "react";
 import KnobPan from "./KnobPan";
 import KnobDb from "./KnobDb";
+import SliderGain from "./SliderGain";
 // Assuming you'll add actual controls later, we use placeholders for now
 // import { Slider, Button, Group, Switch } from '@mantine/core'; // Example if using Mantine later
 // import PlaceholderKnob from './PlaceholderKnob';
@@ -87,21 +88,7 @@ const panValue = useMixerStore(
       </div>
       {/* --- End Top Section --- */}
       {/* --- Middle Section (Slider - Takes Remaining Space) --- */}
-      <div className="flex-grow flex flex-col items-center w-full min-h-0 py-2">
-        {" "}
-        {/* flex-grow, min-h-0 crucial */}
-        <span className="text-xs text-gray-500 mb-1 flex-shrink-0">
-          Digital Gain
-        </span>
-        {/* Placeholder for Vertical Slider - Style it to fill height */}
-        <div className="w-6 h-full bg-gray-200 rounded-full flex items-center justify-center border border-gray-300 relative">
-          <div className="absolute bg-blue-500 w-full h-1/2 bottom-0 rounded-full"></div>{" "}
-          {/* Dummy level indicator */}
-          <div className="absolute bg-white w-4 h-4 rounded-full border-2 border-blue-500 shadow cursor-pointer top-1/4"></div>{" "}
-          {/* Dummy thumb */}
-          {/* NOTE: Actual Slider component needs styling to fill height */}
-        </div>
-      </div>
+      <SliderGain channelIndex={channelIndex} />
       {/* --- End Middle Section --- */}
       {/* --- Bottom Section (Fixed Height Content) --- */}
       <div className="flex-shrink-0 w-full mt-2">
