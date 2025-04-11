@@ -14,54 +14,92 @@ import SliderGain from "./SliderGain";
  * @param {boolean} props.isMaster - True if this is the master channel strip.
  */
 function ChannelStrip({ channelIndex, isMaster, onShowEffects }) {
-  // --- Select State from Store ---
-const panValue = useMixerStore(
-    // Check state and state.channels before indexing
+  const channelLabel = isMaster ? "Master" : `CH ${channelIndex}`;
+  const baseBgColor = isMaster ? "bg-gray-100" : "bg-white"; // Base background
+
+  // --- Select State using MULTIPLE hooks ---
+  const isMuted = useMixerStore(
+    (state) => state?.channels?.[channelIndex]?.muted ?? false
+  );
+  const isSoloed = useMixerStore(
+    (state) => state?.channels?.[channelIndex]?.soloed ?? false
+  );
+  // Only select stereo if master, otherwise use a default
+  const isStereo = useMixerStore((state) =>
+    isMaster ? state?.channels?.[channelIndex]?.stereo ?? false : false
+  );
+  const soloingIsActive = useMixerStore(
+    (state) => state?.soloing_active ?? false
+  );
+  const panValue = useMixerStore(
     (state) => state?.channels?.[channelIndex]?.panning ?? 0.5
   );
   const analogGainValue = useMixerStore(
-    // Check state and state.channels before indexing
-    (state) => state?.channels?.[channelIndex]?.analog_gain ?? 0 // Use default from schema if state not ready
+    (state) => state?.channels?.[channelIndex]?.analog_gain ?? 0
   );
-  // ... select other needed state values ...
 
   // --- Get Actions from Store ---
+  const setMuted = useMixerStore((state) => state.setMuted);
+  const setSoloed = useMixerStore((state) => state.setSoloed);
+  const setStereo = useMixerStore((state) => state.setStereo);
   const setPanning = useMixerStore((state) => state.setPanning);
   const setAnalogGain = useMixerStore((state) => state.setAnalogGain);
 
-  // Added onShowEffects prop
-  const channelLabel = isMaster ? "Master" : `CH ${channelIndex}`;
-  const bgColor = isMaster ? "bg-gray-100" : "bg-white";
-
-  // Handler for the effects button
+  // --- Event Handlers ---
   const handleEffectsClick = () => {
-    // Call the function passed from App/parent, providing the channel index
-    if (onShowEffects) {
-      onShowEffects(channelIndex);
-    } else {
-      console.warn(
-        "onShowEffects handler not provided to ChannelStrip",
-        channelIndex
-      );
-    }
+    if (onShowEffects) onShowEffects(channelIndex);
+  };
+  const handleMuteToggle = () => {
+    setMuted(channelIndex, !isMuted);
+  };
+  const handleSoloToggle = () => {
+    setSoloed(channelIndex, !isSoloed);
+  };
+  // Only call setStereo if it's the master channel
+  const handleStereoToggle = () => {
+    if (isMaster) setStereo(channelIndex, !isStereo);
   };
 
+  // --- Determine Visual State based on Mute/Solo logic ---
+  // A channel is effectively silenced if it's explicitly muted OR
+  // if soloing is active globally AND this channel itself is NOT soloed.
+  const isEffectivelySilenced = isMuted || (soloingIsActive && !isSoloed);
+
+  // --- Dynamic Styling for Buttons/Channel ---
+  // Base styles
+  const buttonBaseStyle =
+    "flex-1 basis-0 text-xs md:text-sm py-1 px-1 rounded border";
+  const muteInactiveStyle =
+    "bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-400";
+  const muteActiveStyle =
+    "bg-red-500 hover:bg-red-600 text-white border-red-700 font-semibold shadow-inner";
+  const soloInactiveStyle =
+    "bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-400";
+  const soloActiveStyle =
+    "bg-yellow-400 hover:bg-yellow-500 text-black border-yellow-600 font-semibold shadow-inner";
+  const stereoInactiveStyle =
+    "bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-400"; // Mono state
+  const stereoActiveStyle =
+    "bg-blue-500 hover:bg-blue-600 text-white border-blue-700 font-semibold shadow-inner"; // Stereo state
+
+  // Channel strip background dims if effectively silenced (but not if it's the one *being* soloed)
+  const channelBgColor =
+    isEffectivelySilenced && !isSoloed
+      ? "bg-gray-300 opacity-70"
+      : isMaster
+      ? "bg-gray-100"
+      : "bg-white";
+
   return (
-    // --- Root Container: Vertical Flex, Basis-0 for equal width, Min-Width for shrinking, Full Height ---
+    // Apply dynamic background to root
     <div
-      className={`flex-1 basis-0 min-w-0 border border-gray-300 ${bgColor} h-full flex flex-col p-2 md:p-4 overflow-hidden`}
+      className={`flex-1 basis-0 min-w-0 border border-gray-300 ${channelBgColor} h-full flex flex-col p-2 md:p-4 overflow-hidden`}
     >
-      {" "}
-      {/* Use smaller padding on smaller screens */}
-      {/* --- Top Section (Fixed Height Content) --- */}
+      {/* --- Top Section --- */}
       <div className="flex-shrink-0 w-full">
-        {" "}
-        {/* Prevents this section from shrinking */}
         <div className="text-center mb-2">
-          <span className="text-sm md:text-base font-bold">{channelLabel}</span>{" "}
-          {/* Slightly smaller font on small screens */}
+          <span className="text-sm md:text-base font-bold">{channelLabel}</span>
         </div>
-        {/* Placeholder for Analog Gain Knob - Use w-full if needed */}
         {!isMaster && (
           <div className="flex justify-center mb-2">
             <KnobDb
@@ -70,56 +108,63 @@ const panValue = useMixerStore(
               onChange={(val) => setAnalogGain(channelIndex, val)}
               min={-12.0}
               max={32.0}
-              // Optional: Adjust size/color if needed
-              // size={56}
             />
           </div>
         )}
-        {/* --- Effects Button - Updated --- */}
         <button
-          onClick={handleEffectsClick} // Use the new handler
-          className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 text-xs md:text-sm py-1 px-2 rounded mb-2 disabled:opacity-50"
-          disabled={isMaster && channelIndex !== 0} // Example: Disable effects for Master if needed, adjust logic
-          // Master *does* have effects (EQ, Comp, Reverb), so maybe never disable? Or disable based on context?
-          // For now, enable for all based on description.
+          onClick={handleEffectsClick}
+          className="w-full bg-blue-100 hover:bg-blue-200 ..."
         >
           Effects
         </button>
       </div>
-      {/* --- End Top Section --- */}
-      {/* --- Middle Section (Slider - Takes Remaining Space) --- */}
+      {/* --- Middle Section: Digital Gain Slider --- */}
       <SliderGain channelIndex={channelIndex} />
-      {/* --- End Middle Section --- */}
-      {/* --- Bottom Section (Fixed Height Content) --- */}
+      {/* --- Bottom Section --- */}
       <div className="flex-shrink-0 w-full mt-2">
-        {" "}
-        {/* Use the specific KnobPan component */}
         <div className="flex justify-center mb-2">
           <KnobPan
             value={panValue}
             onChange={(val) => setPanning(channelIndex, val)}
-            // Optional: Adjust size/color
-            // size={56}
           />
         </div>
-        {/* Stereo Toggle (Master Only) */}
-        {isMaster && (
-          <div className="flex items-center justify-center text-xs md:text-sm">
-            <button className="flex-1 basis-0 bg-red-100 hover:bg-red-200 text-red-800 text-xs md:text-sm py-1 px-1 rounded">
-              Stereo
-            </button>
-          </div>
-        )}
+
         {/* Mute/Solo Buttons */}
         <div className="flex justify-center space-x-2 mb-2">
-          <button className="flex-1 basis-0 bg-red-100 hover:bg-red-200 text-red-800 text-xs md:text-sm py-1 px-1 rounded">
+          <button
+            onClick={handleMuteToggle}
+            className={`${buttonBaseStyle} ${
+              isMuted ? muteActiveStyle : muteInactiveStyle
+            }`}
+          >
             Mute
           </button>
-          <button className="flex-1 basis-0 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 text-xs md:text-sm py-1 px-1 rounded">
+          <button
+            onClick={handleSoloToggle}
+            className={`${buttonBaseStyle} ${
+              isSoloed ? soloActiveStyle : soloInactiveStyle
+            }`}
+          >
             Solo
           </button>
         </div>
-      </div>
+
+        {/* Stereo Toggle (Master Only) */}
+        {isMaster && (
+          <div className="flex items-center justify-center text-xs md:text-sm mt-1">
+            {" "}
+            {/* Added margin top */}
+            <button
+              onClick={handleStereoToggle}
+              className={`w-full ${buttonBaseStyle} ${
+                isStereo ? stereoActiveStyle : stereoInactiveStyle
+              }`} // Use full width if it's the only button
+            >
+              {isStereo ? "Stereo" : "Mono"} {/* Dynamically change label */}
+            </button>
+          </div>
+        )}
+      </div>{" "}
       {/* --- End Bottom Section --- */}
     </div> // --- End Root Container ---
   );
