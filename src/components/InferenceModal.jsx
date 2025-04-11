@@ -1,200 +1,251 @@
 // src/components/InferenceModal.jsx
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import useMixerStore from '../store/mixerStore'; // Import Zustand store hook
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import useMixerStore from "../store/mixerStore";
 
-// Constants for timing
 const COUNTDOWN_SECONDS = 5;
 const RECORDING_SECONDS = 6;
+const ESTIMATED_INFERENCE_SECONDS = 20;
 
-/**
- * InferenceModal Component
- * @param {object} props
- * @param {boolean} props.isOpen - Controls modal visibility
- * @param {function} props.onClose - Function to call to close the modal
- */
 function InferenceModal({ isOpen, onClose }) {
-  const [stage, setStage] = useState('idle'); // 'idle', 'countdown', 'recording', 'waiting'
+  const currentGlobalStage = useMixerStore(
+    (state) => state.inferencing_state ?? "idle"
+  );
+  const setInferencingState = useMixerStore(
+    (state) => state.setInferencingState
+  );
+
+  // Local state ONLY for countdown display number
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
-  const [progress, setProgress] = useState(0); // Progress percentage (0-100)
+  // Local state for progress bar percentage
+  const [progress, setProgress] = useState(0);
 
-  // Refs for timers to ensure proper cleanup
   const countdownIntervalRef = useRef(null);
-  const recordingTimeoutRef = useRef(null); // Use timeout for recording end
+  const progressAnimationRef = useRef(null);
 
-  // Get the action from Zustand store
-  const setInferencingActive = useMixerStore(state => state.setInferencingActive);
+  // --- Function to calculate target progress based on stage ---
+  const calculateTargetProgress = useCallback(
+    (stage, currentCountdown = COUNTDOWN_SECONDS) => {
+      const totalEstSeconds =
+        COUNTDOWN_SECONDS + RECORDING_SECONDS + ESTIMATED_INFERENCE_SECONDS;
+      let targetProgress = 0;
+      if (stage === "countdown") {
+        const elapsedCountdown = COUNTDOWN_SECONDS - currentCountdown;
+        targetProgress = (elapsedCountdown / totalEstSeconds) * 100;
+      } else if (stage === "recording") {
+        targetProgress = (COUNTDOWN_SECONDS / totalEstSeconds) * 100;
+      } else if (stage === "inferencing") {
+        targetProgress =
+          ((COUNTDOWN_SECONDS + RECORDING_SECONDS) / totalEstSeconds) * 100;
+      }
+      return targetProgress;
+    },
+    []
+  ); // No dependencies needed
+
+  // --- Effect to handle global state changes ---
+  useEffect(() => {
+    // Cancel local countdown if global state moves past it
+    if (
+      currentGlobalStage === "recording" ||
+      currentGlobalStage === "inferencing" ||
+      currentGlobalStage === "idle"
+    ) {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+    }
+    // If global state is idle, reset local display state
+    if (currentGlobalStage === "idle") {
+      setCountdown(COUNTDOWN_SECONDS);
+      setProgress(0);
+      if (progressAnimationRef.current)
+        cancelAnimationFrame(progressAnimationRef.current);
+    } else {
+      // Update progress bar based on the *new* global stage
+      const target = calculateTargetProgress(currentGlobalStage);
+      // Only animate if moving *into* recording or inferencing
+      if (currentGlobalStage === "recording") {
+        animateProgressTo(
+          ((COUNTDOWN_SECONDS + RECORDING_SECONDS) /
+            (COUNTDOWN_SECONDS +
+              RECORDING_SECONDS +
+              ESTIMATED_INFERENCE_SECONDS)) *
+            100,
+          RECORDING_SECONDS * 1000
+        );
+      } else if (currentGlobalStage === "inferencing") {
+        animateProgressTo(100, ESTIMATED_INFERENCE_SECONDS * 1000);
+      } else {
+        // For countdown or idle, just set progress directly
+        if (progressAnimationRef.current)
+          cancelAnimationFrame(progressAnimationRef.current);
+        setProgress(target);
+      }
+    }
+  }, [currentGlobalStage, calculateTargetProgress]); // Rerun when global state changes
 
   // --- Timer Cleanup ---
-  // Ensure timers are cleared if component unmounts or modal is closed abruptly
   useEffect(() => {
     return () => {
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-      if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+      if (countdownIntervalRef.current)
+        clearInterval(countdownIntervalRef.current);
+      if (progressAnimationRef.current)
+        cancelAnimationFrame(progressAnimationRef.current);
     };
   }, []);
 
-  // --- Reset State on Close ---
-  // When the modal is closed externally (via prop), reset internal state
+  // --- Reset Local State on Close ---
   useEffect(() => {
     if (!isOpen) {
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-      if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
-      setStage('idle');
+      if (countdownIntervalRef.current)
+        clearInterval(countdownIntervalRef.current);
+      if (progressAnimationRef.current)
+        cancelAnimationFrame(progressAnimationRef.current);
+      // Reset local countdown display
       setCountdown(COUNTDOWN_SECONDS);
       setProgress(0);
-      // Note: We don't automatically set inferencing_active=false here
-      // if the modal is closed during recording, as the backend should handle it.
-      // If manual cancel during recording is needed later, add that logic.
+      // Closing the modal doesn't automatically change the global state here
+      // If the process is running, it continues until explicitly cancelled or finished.
     }
   }, [isOpen]);
 
+  // --- Progress Animation Helper ---
+  const animateProgressTo = (targetPercent, durationMs) => {
+    if (progressAnimationRef.current)
+      cancelAnimationFrame(progressAnimationRef.current);
+    // Get current progress value using a function form if needed, otherwise direct state is fine here
+    const startPercent = progress;
+    const startTime = performance.now();
+    const step = (timestamp) => {
+      const elapsed = timestamp - startTime;
+      const progressRatio = Math.min(1, elapsed / durationMs);
+      const currentPercent =
+        startPercent + (targetPercent - startPercent) * progressRatio;
+      setProgress(currentPercent); // SAFE: requestAnimationFrame runs outside render cycle
+      if (progressRatio < 1) {
+        progressAnimationRef.current = requestAnimationFrame(step);
+      } else {
+        progressAnimationRef.current = null;
+      }
+    };
+    progressAnimationRef.current = requestAnimationFrame(step);
+  };
 
-  // --- Handlers for State Transitions ---
-
+  // --- Start Countdown Handler ---
   const handleStartCountdown = useCallback(() => {
-    if (stage !== 'idle') return;
+    // Check global state to prevent starting if already running
+    if (useMixerStore.getState().inferencing_state !== "idle") return;
+
     console.log("Modal: Starting countdown...");
-    setStage('countdown');
-    setCountdown(COUNTDOWN_SECONDS); // Reset just in case
+    // --- Tell Backend/Store to enter countdown state ---
+    setInferencingState("countdown");
+    // ----------------------------------------------
+    setCountdown(COUNTDOWN_SECONDS); // Reset local display countdown
     setProgress(0); // Reset progress
+
+    // Clear any previous interval just in case
+    if (countdownIntervalRef.current)
+      clearInterval(countdownIntervalRef.current);
 
     countdownIntervalRef.current = setInterval(() => {
       setCountdown((prev) => {
         const nextVal = prev - 1;
+        // Update progress bar based on current countdown value
+        // This setState call might be the one causing the warning if called rapidly
+        // Let's move progress update into the main useEffect instead
+        // setProgress(calculateTargetProgress('countdown', nextVal)); // <-- MOVE THIS
+
         if (nextVal <= 0) {
-          clearInterval(countdownIntervalRef.current); // Stop countdown timer
-          handleStartRecording(); // Transition to next stage
-          return 0; // Ensure countdown shows 0 briefly
+          clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null; // Clear ref
+          // --- Tell Backend/Store to enter recording state ---
+          setInferencingState("recording");
+          // ----------------------------------------------
+          return 0;
         }
-        // Update progress bar during countdown (Yellow portion)
-        setProgress(((COUNTDOWN_SECONDS - nextVal) / COUNTDOWN_SECONDS) * (5 / (5 + 6 + 20)) * 100); // Approx ratio
         return nextVal;
       });
-    }, 1000); // Run every second
-  }, [stage]); // Dependency: stage
-
-
-  const handleStartRecording = useCallback(() => {
-    console.log("Modal: Starting recording (sending inferencing_active=true)...");
-    setStage('recording');
-    // --- Tell backend to start ---
-    setInferencingActive(true);
-    // --- Start 6-second timer ---
-    const startTime = Date.now();
-    const totalDuration = (5 + 6 + 20) * 1000; // Approx total ms
-    const recordingEndTime = startTime + RECORDING_SECONDS * 1000;
-
-    // Animate progress bar during recording (Green portion)
-    const animateRecordingProgress = () => {
-       const now = Date.now();
-       if (now >= recordingEndTime) {
-           setProgress(((COUNTDOWN_SECONDS + RECORDING_SECONDS) * 1000 / totalDuration) * 100); // Ensure it hits end of green
-           handleStartWaiting(); // Transition after 6 seconds
-           return; // Stop animation
-       }
-       const elapsedRecording = now - startTime;
-       // Calculate progress based on time elapsed within the total estimated duration
-       const currentProgress = ((COUNTDOWN_SECONDS * 1000 + elapsedRecording) / totalDuration) * 100;
-       setProgress(currentProgress);
-       requestAnimationFrame(animateRecordingProgress); // Continue animation
-    };
-    requestAnimationFrame(animateRecordingProgress); // Start animation
-
-
-    // We don't actually need a timeout here now because the backend
-    // is responsible for setting inferencing_active=false after 6s.
-    // The animation loop above handles transitioning to 'waiting' visually.
-
-  }, [setInferencingActive]); // Dependency: setInferencingActive
-
-
-  const handleStartWaiting = useCallback(() => {
-      console.log("Modal: Recording finished, entering waiting stage...");
-      setStage('waiting');
-      // Animate progress bar during waiting (Blue portion) - Optional
-      // This is tricky as backend time varies. We could just set it
-      // to the start of the blue section and show a spinner.
-      setProgress(((COUNTDOWN_SECONDS + RECORDING_SECONDS) * 1000 / ((5 + 6 + 20) * 1000)) * 100); // Start of blue
-      // The backend will eventually send the results, updating the main app state.
-      // This modal doesn't currently react to that completion, it just shows 'waiting'.
-      // Consider adding a message or automatically closing after a while?
-      // For now, user closes manually via onClose.
-  }, []);
-
+    }, 1000);
+  }, [setInferencingState, calculateTargetProgress]); // Removed updateProgressBar
 
   // --- Render Logic ---
-  if (!isOpen) {
-    return null; // Don't render anything if not open
-  }
+  if (!isOpen) return null;
 
-  // Modal Backdrop & Container
+  // Display based on GLOBAL stage from store
+  const displayStage = currentGlobalStage;
+
   return (
     <div
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      onClick={onClose} // Close on backdrop click
+      onClick={onClose}
     >
       <div
         className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4 text-center"
-        onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside modal
+        onClick={(e) => e.stopPropagation()}
       >
-        {/* Title */}
         <h2 className="text-2xl font-bold mb-4">AI Auto-Mixing</h2>
 
-        {/* --- Content based on Stage --- */}
-
-        {stage === 'idle' && (
+        {/* --- Content based on Display Stage --- */}
+        {displayStage === "idle" && (
           <>
             <p className="text-gray-600 mb-6">
-              Prepare to play a representative 6-second snippet of your music through the active input channels.
-              Click start when ready to begin the 5-second countdown.
+              Prepare to play a representative 6-second snippet... Click start
+              for the 5-second countdown.
             </p>
             <button
               onClick={handleStartCountdown}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-blue-600 ..."
             >
               Start Countdown
             </button>
           </>
         )}
-
-        {stage === 'countdown' && (
+        {displayStage === "countdown" && (
           <>
             <p className="text-gray-600 mb-4">Get Ready!</p>
-            <p className="text-6xl font-bold mb-6">{countdown}</p>
+            <p className="text-6xl font-bold mb-6">{countdown}</p>{" "}
+            {/* Shows local countdown */}
             <p className="text-gray-600 mb-6">Start playing now!</p>
           </>
         )}
-
-        {stage === 'recording' && (
+        {displayStage === "recording" && (
           <>
-            <p className="text-red-600 font-bold mb-6 text-xl animate-pulse">RECORDING AUDIO</p>
+            <p className="text-red-600 font-bold mb-6 text-xl animate-pulse">
+              RECORDING AUDIO
+            </p>
             <p className="text-gray-600 mb-6">(6 seconds)</p>
           </>
         )}
-
-        {stage === 'waiting' && (
+        {displayStage === "inferencing" && ( // Renamed from 'waiting'
           <>
-            <p className="text-blue-600 font-bold mb-6 text-xl">Inferencing...</p>
-            {/* Basic Spinner Placeholder */}
+            <p className="text-blue-600 font-bold mb-6 text-xl">
+              Inferencing...
+            </p>
             <div className="flex justify-center items-center mb-6">
               <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
             </div>
-             <p className="text-gray-500 text-sm mb-6">This may take 15-20 seconds. You can close this window.</p>
+            <p className="text-gray-500 text-sm mb-6">
+              Applying mix... (~{ESTIMATED_INFERENCE_SECONDS}s). You can close
+              this window.
+            </p>
           </>
         )}
 
-         {/* --- Progress Bar --- */}
-         {stage !== 'idle' && (
-             <div className="w-full bg-gray-200 rounded-full h-4 mt-6 overflow-hidden">
-                 <div
-                     className="bg-gradient-to-r from-yellow-400 via-green-500 to-blue-600 h-4 rounded-full transition-all duration-100 ease-linear" // Smooth transition
-                     style={{ width: `${progress}%` }}
-                 ></div>
-             </div>
-         )}
+        {/* --- Progress Bar --- */}
+        {displayStage !== "idle" && (
+          <div className="w-full bg-gray-200 rounded-full h-4 mt-6 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-yellow-400 via-green-500 to-blue-600 h-4 rounded-full transition-width duration-500 ease-linear"
+              style={{ width: `${progress}%` }} // Use progress state
+            ></div>
+          </div>
+        )}
 
-        {/* Close Button (optional, since backdrop click also closes) */}
-        <button onClick={onClose} className="mt-6 text-sm text-gray-500 hover:text-gray-700">
+        <button
+          onClick={onClose}
+          className="mt-6 text-sm text-gray-500 hover:text-gray-700"
+        >
           Close
         </button>
       </div>
