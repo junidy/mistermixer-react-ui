@@ -9,6 +9,9 @@ const internalMapTo01Linear = (value, min, max) => {
     return Math.max(0, Math.min(1, (value - min) / (max - min)));
 };
 
+// Define a reference root font size (usually 16px for default browser/Tailwind)
+const REFERENCE_ROOT_FONT_SIZE = 16;
+
 /**
  * KnobBase - Core visual/interaction component.
  * Uses default linear scaling unless map functions are provided.
@@ -65,18 +68,40 @@ function KnobBase({
     onValueRawChange(newValueRaw);                  // Call the external handler
   }, [onValueRawChange, internalMapTo01]);
 
+  // --- Styling ---
+  // Calculate size in rem based on the pixel size prop and reference font size
+  const sizeInRem = size / REFERENCE_ROOT_FONT_SIZE;
+  const knobStyle = {
+    width: `${sizeInRem}rem`, // Use rem units
+    height: `${sizeInRem}rem`, // Use rem units
+  };
 
   // --- Styling ---
-  const knobStyle = { width: `${size}px`, height: `${size}px` };
+  // const knobStyle = { width: `${size}px`, height: `${size}px` };
   const rotationRange = 270;
   const startAngle = -135;
   const rotation = startAngle + normalizedValue * rotationRange;
-  const indicatorStyle = {
-    transform: `rotate(${rotation}deg)`,
-    height: `${size * 0.35}px`, width: `${size * 0.05}px`,
-    bottom: '50%', left: '50%', transformOrigin: 'bottom center',
+
+    // --- Indicator Styling - Revised ---
+  // --- Indicator Styling - CORRECTION for Centered Rotation ---
+  const indicatorHeightRem = (size * 0.35) / REFERENCE_ROOT_FONT_SIZE;
+  const indicatorWidthRem = (size * 0.05) / REFERENCE_ROOT_FONT_SIZE;
+  // Style for the indicator line itself
+  const indicatorLineStyle = {
+    height: `${indicatorHeightRem}rem`,
+    width: `${indicatorWidthRem}rem`,
     backgroundColor: 'currentColor',
-  };
+    // --- CORRECTED: Position origin at bottom center ---
+    transformOrigin: 'bottom center',
+    // --- Apply rotation AND translate up to pivot around center ---
+    // Translate Y by negative half the indicator's height to move pivot point up
+    transform: `translateY(-${indicatorHeightRem / 2}rem) rotate(${rotation}deg)`,
+    // --- Force it to be above the track background potentially ---
+    zIndex: 1,
+    // --- Add rounded corners ---
+    borderRadius: '9999px', // Tailwind's rounded-full equivalent
+};
+
 
   return (
     <div className="flex flex-col items-center space-y-1">
@@ -100,11 +125,16 @@ function KnobBase({
         aria-label={label}
         tabIndex={-1} // Ensure not keyboard focusable
       >
-        {/* Visual Indicator Line */}
-        <div
-          className={`absolute rounded-full pointer-events-none ${color}`}
-          style={indicatorStyle}
-        ></div>
+       {/* --- Indicator Container - Center Content --- */}
+        {/* Position absolutely, use flex to center the indicator line horizontally and vertically */}
+        <div className="absolute inset-0 flex justify-center items-center pointer-events-none">
+             {/* The visible indicator line, rotation handled by inline style */}
+             <div
+                className={`${color}`} // Apply color via text-* on parent
+                style={indicatorLineStyle} // Apply calculated style
+            ></div>
+        </div>
+        {/* --- End Indicator Container --- */}
       </KnobHeadless>
 
       {/* Value Output */}
