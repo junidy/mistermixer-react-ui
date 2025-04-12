@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "launch-pi": "WEBKIT_DISABLE_COMPOSITING_MODE=1 ./src-tauri/target/release/app"
   },
   "dependencies": {
     "@capacitor/cli": "^7.2.0",
