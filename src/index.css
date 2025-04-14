@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+/* Apply user-select: none globally */
+@layer base {
+    body {
+      @apply select-none; /* Use Tailwind's utility class */
+      /* Add vendor prefixes for slightly older browser/webview compatibility if needed */
+      -webkit-user-select: none; /* Safari, Chrome */
+      -moz-user-select: none;    /* Firefox */
+      -ms-user-select: none;     /* Internet Explorer/Edge */
+    }
+  }
