@@ -68,7 +68,7 @@ function MixerHeader({
       >
         {" "}
         {/* Basic centering attempt */}
-        Digital Mixer Console
+        MISTER MIXER
       </h1>
       {/* Inferencing Button - uses new handler */}
       <button
